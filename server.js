@@ -1,10 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
+const path = require('path');
 const { URL } = require('url');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.static('public')); // Serve static files from the "public" directory
@@ -21,11 +22,15 @@ app.get('/search', async (req, res) => {
     try {
         url = new URL(linkedinUrl);
     } catch (e) {
+        console.error('Invalid URL format:', e);
         return res.status(400).send('Invalid URL format');
     }
 
     try {
-        const browser = await puppeteer.launch({ headless: true });
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
         const page = await browser.newPage();
 
         // Set user agent to a mobile device
@@ -36,56 +41,33 @@ app.get('/search', async (req, res) => {
 
         console.log(`Navigating to URL: ${url.href}`); // Log the URL
 
-        await page.goto(url.href, { waitUntil: 'networkidle2' });
+        // Attempt navigation with error handling
+        try {
+            await page.goto(url.href, { waitUntil: 'networkidle2' });
+        } catch (navigationError) {
+            console.error('Error navigating to URL:', navigationError);
+            await browser.close();
+            return res.status(500).send('Error navigating to URL');
+        }
 
         // Extract JSON-LD content
         const jsonLdData = await page.evaluate(() => {
             const jsonLdElement = document.querySelector('script[type="application/ld+json"]');
-            return jsonLdElement ? JSON.parse(jsonLdElement.textContent) : null;
+            if (!jsonLdElement) {
+                console.error('No JSON-LD element found');
+                return null;
+            }
+            return jsonLdElement.textContent; // Return raw JSON-LD text content
         });
 
         await browser.close();
 
         if (!jsonLdData) {
-            return res.status(500).send('Error extracting JSON-LD data');
+            console.error('No JSON-LD data found.');
+            return res.status(500).send('No JSON-LD data found.');
         }
 
-        // Arrange the data in a readable format
-        const profileData = jsonLdData['@graph'].find(item => item['@type'] === 'Person');
-
-        const arrangedData = {
-            name: profileData.name || '',
-            jobTitle: profileData.jobTitle ? profileData.jobTitle.join(', ') : '',
-            address: profileData.address ? `${profileData.address.addressLocality}, ${profileData.address.addressCountry}` : '',
-            image: profileData.image ? profileData.image.contentUrl : '',
-            worksFor: profileData.worksFor ? profileData.worksFor.map(org => org.name).join(', ') : '',
-            education: profileData.alumniOf ? profileData.alumniOf.map(org => ({
-                name: org.name,
-                location: org.location,
-                description: org.member?.description || '',
-                startDate: org.member?.startDate || '',
-                endDate: org.member?.endDate || ''
-            })) : [],
-            languages: profileData.knowsLanguage ? profileData.knowsLanguage.map(lang => lang.name).join(', ') : '',
-            description: profileData.description || '',
-            profileUrl: profileData.url || '',
-            experiences: profileData.alumniOf ? profileData.alumniOf.map(org => ({
-                name: org.name,
-                location: org.location,
-                description: org.member?.description || '',
-                startDate: org.member?.startDate || '',
-                endDate: org.member?.endDate || ''
-            })) : [],
-            worksForDetails: profileData.worksFor ? profileData.worksFor.map(org => ({
-                name: org.name,
-                location: org.location,
-                description: org.member?.description || '',
-                startDate: org.member?.startDate || '',
-                endDate: org.member?.endDate || ''
-            })) : []
-        };
-
-        res.json(arrangedData);
+        res.send(jsonLdData); // Send raw JSON-LD data as the response
     } catch (error) {
         console.error('Error fetching profile data:', error);
         res.status(500).send('Error fetching profile data');

@@ -38,22 +38,32 @@ app.get('/search', async (req, res) => {
 
         console.log(`Navigating to URL: ${url.href}`); // Log the URL
 
-        await page.goto(url.href, { waitUntil: 'networkidle2' });
+        await page.goto(url.href, { waitUntil: 'networkidle2' }).catch(err => {
+            console.error(`Error navigating to ${url.href}:`, err);
+            res.status(500).send(`Error navigating to ${url.href}`);
+        });
 
         // Extract JSON-LD content
         const jsonLdData = await page.evaluate(() => {
             const jsonLdElement = document.querySelector('script[type="application/ld+json"]');
             return jsonLdElement ? JSON.parse(jsonLdElement.textContent) : null;
+        }).catch(err => {
+            console.error('Error extracting JSON-LD data:', err);
+            res.status(500).send('Error extracting JSON-LD data');
         });
 
         await browser.close();
 
         if (!jsonLdData) {
-            return res.status(500).send('Error extracting JSON-LD data');
+            return res.status(500).send('No JSON-LD data found on the page');
         }
 
         // Arrange the data in a readable format
         const profileData = jsonLdData['@graph'].find(item => item['@type'] === 'Person');
+
+        if (!profileData) {
+            return res.status(500).send('No profile data found in JSON-LD data');
+        }
 
         const arrangedData = {
             name: profileData.name || '',

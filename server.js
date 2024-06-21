@@ -20,6 +20,7 @@ app.get('/search', async (req, res) => {
     try {
         url = new URL(linkedinUrl);
     } catch (e) {
+        console.error('Invalid URL format:', e);
         return res.status(400).send('Invalid URL format');
     }
 
@@ -38,12 +39,20 @@ app.get('/search', async (req, res) => {
 
         console.log(`Navigating to URL: ${url.href}`); // Log the URL
 
-        await page.goto(url.href, { waitUntil: 'networkidle2' });
+        // Attempt navigation with error handling
+        try {
+            await page.goto(url.href, { waitUntil: 'networkidle2' });
+        } catch (navigationError) {
+            console.error('Error navigating to URL:', navigationError);
+            await browser.close();
+            return res.status(500).send('Error navigating to URL');
+        }
 
         // Extract JSON-LD content
         const jsonLdData = await page.evaluate(() => {
             const jsonLdElement = document.querySelector('script[type="application/ld+json"]');
             if (!jsonLdElement) {
+                console.error('No JSON-LD element found');
                 return null;
             }
             try {
@@ -62,7 +71,7 @@ app.get('/search', async (req, res) => {
         }
 
         // Arrange the data in a readable format
-        const profileData = jsonLdData['@graph'].find(item => item['@type'] === 'Person');
+        const profileData = jsonLdData['@graph']?.find(item => item['@type'] === 'Person');
 
         if (!profileData) {
             console.error('No profile data found in JSON-LD data.');
